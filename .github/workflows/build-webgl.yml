@@ -1,15 +1,26 @@
 name: Build WebGL
 
 on:
-  push:
-    branches: [ master, main ]
   workflow_dispatch:
+    inputs:
+      workflow_mode:
+        description: 'Select mode'
+        required: true
+        default: 'requestActivation'
+        type: choice
+        options:
+          - requestActivation
+          - build
 
 jobs:
   requestActivation:
     name: Request Unity activation file
     runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.workflow_mode == 'requestActivation' }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Request manual activation file
         id: getManualLicenseFile
         uses: game-ci/unity-request-activation-file@v2
@@ -21,3 +32,40 @@ jobs:
         with:
           name: Unity_v2023.2.10f1.alf
           path: ${{ steps.getManualLicenseFile.outputs.filePath }}
+
+  build:
+    name: Build for WebGL
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.workflow_mode == 'build' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-WebGL-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
+          restore-keys: |
+            Library-WebGL-
+            Library-
+
+      - name: Build WebGL
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          targetPlatform: WebGL
+          unityVersion: 2023.2.10f1
+          buildName: CarromGame
+
+      - name: Upload WebGL Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: CarromGame-WebGL
+          path: build/WebGL
+          retention-days: 30
