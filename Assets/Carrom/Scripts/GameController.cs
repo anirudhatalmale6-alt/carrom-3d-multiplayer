@@ -83,7 +83,7 @@ namespace BEKStudio{
 
             targetTag = (string)PhotonNetwork.LocalPlayer.CustomProperties["tag"];
 
-            topTotalBetText.text = (PhotonController.Instance.roomEntryPice * 2).ToString("###,###,###");
+            topTotalBetText.text = WordPressAPI.WIN_PRIZE.ToString("###,###,###");  // Rs 18
 
             if (PhotonController.Instance.playWithBot){
                 SetTopUsersForBot();
@@ -130,10 +130,10 @@ namespace BEKStudio{
                 toastMessageText.text = "Practice Mode";
             } else if (targetTag == "White"){
                 statusPanelText.text = "YOU START";
-                toastMessageText.text = "Pot all white pucks to win the match";
+                toastMessageText.text = "First to 5 pucks wins!";
             } else if (targetTag == "Black"){
                 statusPanelText.text = "OPPONENT START";
-                toastMessageText.text = "Pot all black pucks to win the match";
+                toastMessageText.text = "First to 5 pucks wins!";
             }
 
             statusPanel.anchoredPosition = new Vector2(-940f, statusPanel.anchoredPosition.y);
@@ -290,7 +290,10 @@ namespace BEKStudio{
                 allPucks[i].GetComponent<CircleCollider2D>().enabled = true;
             }
 
-            PlayerPuck.Instance.EnablePuckPhysic();
+            // Only enable physics for human player - bot handles its own physics
+            if (whichPlayer == WhichPlayer.ME || !PhotonController.Instance.playWithBot){
+                PlayerPuck.Instance.EnablePuckPhysic();
+            }
         }
 
         public void PuckOnHole(string puckTag, string puckName){
@@ -341,20 +344,16 @@ namespace BEKStudio{
                 return;
             }
 
-            if (PhotonController.Instance.whichMode == "disc"){
-                if (homePucksCollected.Count == 9){
-                    gameState = targetTag == "White" ? GameState.WIN : GameState.LOSE;
-                } else if (awayPucksCollected.Count == 9){
-                    gameState = targetTag == "Black" ? GameState.WIN : GameState.LOSE;
-                }
-            } else if (PhotonController.Instance.whichMode == "carrom"){
-                if (redPuckCollected){
-                    if (homePucksCollected.Count == 9){
-                        gameState = targetTag == "White" ? GameState.WIN : GameState.LOSE;
-                    } else if (awayPucksCollected.Count == 9){
-                        gameState = targetTag == "Black" ? GameState.WIN : GameState.LOSE;
-                    }
-                }
+            // Quick Match Rule: First to 5 pucks wins (faster games)
+            int pucksToWin = Constants.PUCKS_TO_WIN;  // 5 pucks
+
+            // Check if either player has reached 5 pucks
+            if (homePucksCollected.Count >= pucksToWin){
+                // White player (home) wins
+                gameState = targetTag == "White" ? GameState.WIN : GameState.LOSE;
+            } else if (awayPucksCollected.Count >= pucksToWin){
+                // Black player (away) wins
+                gameState = targetTag == "Black" ? GameState.WIN : GameState.LOSE;
             }
 
             if (gameState == GameState.WIN || gameState == GameState.LOSE){
@@ -591,22 +590,40 @@ namespace BEKStudio{
         }
 
         void GameOver(){
+            Debug.Log("GameOver called - State: " + gameState);
+
             settingsScreen.SetActive(false);
             PhotonNetwork.AutomaticallySyncScene = false;
 
+            // Win prize is Rs 18 (fixed) not 2x entry fee
+            int winPrize = WordPressAPI.WIN_PRIZE;  // Rs 18
+
             if (gameState == GameState.WIN){
-                // Call WordPress API to credit winnings
-                WordPressAPI.Instance.CreditWinnings((success, message) => {
-                    if (success){
-                        Debug.Log("Winnings credited successfully!");
-                    } else {
-                        Debug.LogError("Failed to credit winnings: " + message);
-                    }
-                });
-                statusPanelText.text = "YOU WIN\n+Rs" + WordPressAPI.WIN_PRIZE;
+                // Add winnings to local coins
+                int currentCoins = PlayerPrefs.GetInt("coin", 0);
+                int newBalance = currentCoins + winPrize;
+                PlayerPrefs.SetInt("coin", newBalance);
+                PlayerPrefs.Save();
+
+                // Sync to WordPress DB in background (with null check)
+                if (WordPressAPI.Instance != null){
+                    WordPressAPI.Instance.SaveCoinBalance(newBalance, (success, message) => {
+                        Debug.Log("Win sync result: " + success + " - " + message);
+                    });
+                }
+                statusPanelText.text = "YOU WIN\n+₹" + winPrize;
             } else if (gameState == GameState.LOSE){
-                statusPanelText.text = "YOU LOSE";
+                // Sync current coins to server (entry fee already deducted)
+                int currentCoins = PlayerPrefs.GetInt("coin", 0);
+                if (WordPressAPI.Instance != null){
+                    WordPressAPI.Instance.SaveCoinBalance(currentCoins, (success, message) => {
+                        Debug.Log("Lose sync result: " + success + " - " + message);
+                    });
+                }
+                statusPanelText.text = "YOU LOSE\n-₹" + WordPressAPI.ENTRY_FEE;
             }
+
+            Debug.Log("Showing status screen");
 
             statusPanel.anchoredPosition = new Vector2(-940f, statusPanel.anchoredPosition.y);
             statusBackground.color = new Color(0, 0, 0, 0);
@@ -642,7 +659,7 @@ namespace BEKStudio{
                                     });
                                 }
 
-                                LeanTween.value(PhotonController.Instance.roomEntryPice * 2, 0, 1.5f).setOnUpdate(
+                                LeanTween.value(WordPressAPI.WIN_PRIZE, 0, 1.5f).setOnUpdate(
                                     (float val) => {
                                         if (val < 1){
                                             topTotalBetText.text = "0";
